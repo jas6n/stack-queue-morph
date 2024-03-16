@@ -1,0 +1,23 @@
+S
+20
+// test no output length
+steal
+afl
+sh
+creap
+falafel
+scoo
+flames
+applepieapl
+score
+zop
+dd
+afll
+flo
+afel
+flaaa
+asadfa
+creat
+f
+fl
+lafel

@@ -1,0 +1,935 @@
+// Project Identifier: 50EB44D3F029ED934858FFFCEAC3547C68768FC9
+
+#include <iostream>
+#include "xcode_redirect.hpp"
+#include <getopt.h>
+#include <deque>
+#include <vector>
+using namespace std;
+
+
+static struct option long_options[] = {
+    { "help", no_argument, nullptr, 'h' },
+    {"stack", no_argument, nullptr, 's'},
+    {"queue", no_argument, nullptr, 'q'},
+    {"change", no_argument, nullptr, 'c'},
+    {"length", no_argument, nullptr, 'l'},
+    {"swap", no_argument, nullptr, 'p'},
+    {"begin", required_argument, nullptr, 'b'},
+    {"end", required_argument, nullptr, 'e'},
+    {"output", required_argument, nullptr, 'o'},
+    { nullptr, 0, nullptr, '\0'}
+};
+
+class CommandInput{
+public:
+CommandInput(): begin(""), end(""), choice(0), index(0), output('W'), change(false), length(false), swap(false), stack(false), queue(false){}
+
+void get_commands(int argc, char * argv[]){
+    while((choice = getopt_long(argc, argv, "hsqclpb:e:o:", long_options, &index)) != -1){
+        switch(choice){
+            case 'h':
+                cout << "This program morphs one word into another." << endl;
+                exit(0);
+                break;
+
+            case 's':
+                stack = true;
+                break;
+
+            case 'q':
+                queue = true;
+                break;
+            
+            case 'c':
+                change = true;
+                break;
+            
+            case 'l':
+                length = true;
+                break;
+
+            case 'p':
+                swap = true;
+                break;
+
+            case 'b': {
+                string arg{optarg};
+                begin = arg;
+                break;
+            }
+
+            case 'e': {
+                string arg{optarg};
+                end = arg;
+                break;
+            }
+
+            case 'o': {
+                char arg{optarg[0]};
+                if (arg != 'W' && arg != 'M'){
+                    cerr << "Error: Wrong arguments." << endl;
+                    exit(1);
+                }
+                output = arg;
+                break;
+            }
+                
+        }  
+    }
+}
+
+void check_commands(){
+    if (stack == queue){
+        cerr << "Conflicting or duplicate stack and queue specified" << endl;
+        exit(1);
+    } else if (!change && !length && !swap){
+        cerr << "Must specify at least one modification mode (change length swap)" << endl;
+        exit(1);
+    } else if ((swap || change) && !length) {
+        if (begin.size() != end.size()){
+            cerr << "Error: Cannot get to end from start." << endl;
+            exit(1);
+        }
+    } else if (begin == "" || end == ""){
+        cerr << "Error: beginning or end word not specified." << endl;
+        exit(1);
+    }
+    // check if begin or end word is in dictionary
+    // change and/or swap is specified but length is not and end has different number of letters than begin
+}
+
+string get_begin(){
+    return begin;
+}
+
+string get_end(){
+    return end;
+}
+
+bool get_change(){
+    return change;
+}
+
+bool get_length(){
+    return length;
+}
+
+bool get_swap(){
+    return swap;
+}
+
+
+bool get_queue(){
+    return queue;
+}
+
+char get_output(){
+    return output;
+}
+
+// bool get_help(){
+//     return help;
+// }
+
+private:
+string begin;
+string end;
+int choice;
+int index;
+char output;
+bool change;
+bool length;
+bool swap;
+bool stack;
+bool queue;
+
+};
+
+
+struct Word {
+    string name;
+    size_t prev_word_index = 0;
+    size_t word_index = 0; 
+    bool discovered = false;
+    // vector<Word> words_before;// could be problematic since word index is duplicated
+
+
+};
+
+
+class Morph{
+public:
+
+Morph(): begin_index(0), word_count(0), words_in_morph(0), words_searched(0), display_type(true), do_backtrack(false), begin_in(false), end_in(false){}
+
+void read_dict(const string &s1, const string &s2, bool le){
+    char hold;
+    cin >> hold;
+
+    cin >> word_count;
+
+    if (hold == 'S'){
+        word_dict.resize(word_count);
+        read_simple_dict(s1, s2, le);
+    } else {
+        word_dict.resize(word_count * 2);
+        read_complex_dict(s1, s2, le);
+    }
+    if (!begin_in || !end_in){
+        cerr << "Error: Beginning or end word not found in dictionary." << endl;
+        exit(1);
+    }
+
+
+
+
+}
+
+void read_simple_dict(const string &b, const string &e, bool le){
+
+
+    size_t index = 0;
+    string dict_word;
+    while(cin >> dict_word){
+        if (is_comment(dict_word)){
+            getline(cin, dict_word);
+        } else {
+            bool read = true;
+            if (!le){
+                if (b.size() != dict_word.size()){
+                    read = false;
+                }
+            }
+
+            if (read){
+                Word w1;
+                w1.name = dict_word;
+                w1.word_index = index;
+                if (w1.name == b){
+                    begin_in = true;
+                    begin_index = index;
+                    w1.discovered = true;
+                    begin_word = w1;
+                } else if (w1.name == e){
+                    end_in = true;
+                }
+                word_dict[index] = w1;
+                index += 1;
+            }
+        }
+    }
+
+
+}
+
+
+void read_complex_dict(const string &b, const string &e, bool le){
+    bool found_symbol = false;
+    size_t index = 0;
+    string dict_word;
+    while(cin >> dict_word){
+        if (is_comment(dict_word)){
+            getline(cin, dict_word);
+        } else {
+            found_symbol = false;
+
+            if (dict_word[dict_word.size() - 1] == '&'){
+                Word w1;
+                Word w2;
+
+                string s1 = "";
+                string s2 = "";
+
+                for (size_t i = 0; i < dict_word.size() - 1; ++i){
+                    s1 += dict_word[i];
+                    s2 += dict_word[dict_word.size() - 2 - i];
+                }
+
+                bool read = true;
+                
+                if (!le){
+                    if (s1.size() != b.size()){
+                        read = false;
+                    }
+                }
+
+                if (read){
+
+                    w1.name = s1;
+                    w1.word_index = index;
+                        
+                    if (w1.name == b){ // make sure these are right
+                        begin_in = true;
+                        begin_index = index;
+                        w1.discovered = true;
+                        begin_word = w1;
+                    } else if (w1.name == e){
+                        end_in = true;
+                    }
+
+                    word_dict[index] = w1;
+                    index += 1;
+                }
+
+                read = true;
+
+                if (!le){
+                    if (s2.size() != b.size()){
+                        read = false;
+                    }
+                }
+
+            if (read){
+                w2.name = s2;
+                w2.word_index = index;
+
+                if (w2.name == b){
+                    begin_in = true;
+                    begin_index = index;
+                    w2.discovered = true;
+                    begin_word = w2;
+                } else if (w2.name == e){
+                    end_in = true;
+                }
+
+                word_dict[index] = w2;
+                index += 1;
+
+            }
+
+                found_symbol = true;
+
+            } else {
+                for (size_t i = 0; i < dict_word.size(); ++i){ // must fix this, this is the problem
+                    if (dict_word[i] == '['){
+                        // find index of ] symbol
+                        size_t end_bracket = 0;
+                        for (size_t k = 3; k < dict_word.size(); ++k){
+                            if (dict_word[i + k] == ']'){
+                                end_bracket = k;
+                                break;
+                            }
+                        }
+
+
+
+
+                        for (size_t l = 0; l < end_bracket - 1; ++l){
+                            // make it so each instance of loop adds a word to the deque
+                            string s = "";
+                            for (size_t m = 0; m < i; ++m){
+                                s += dict_word[m];
+                            }
+                            s += dict_word[i + 1 + l];
+
+                            for (size_t m = i + end_bracket + 1; m < dict_word.size(); ++m){
+                                s += dict_word[m];
+                            }
+
+                            bool read = true;
+
+                            if (!le){
+                                if (s.size() != b.size()){
+                                    read = false;
+                                }
+                            }
+
+                            if (read){
+                                Word w;
+                                w.name = s;
+                                w.word_index = index;
+
+                                if (w.name == b){
+                                    begin_in = true;
+                                    begin_index = index;
+                                    w.discovered = true;
+                                    begin_word = w;
+                                } else if (w.name == e){
+                                    end_in = true;
+                                }
+
+                                word_dict[index] = w;
+                                index += 1;
+                            }
+                        }
+
+
+                        
+                        found_symbol = true;
+                        break;
+
+                    } else if (dict_word[i] == '!'){
+                        Word w1;
+                        Word w2;
+
+                        string s1 = "";
+                        string s2 = "";
+
+                        size_t j = 0;
+                        while (j < dict_word.size()){
+                            if (j == i - 2) {
+                                s1 += dict_word[j];
+                                s1 += dict_word[j+1];
+                                s2 += dict_word[j+1];
+                                s2 += dict_word[j];
+                                j += 3;
+                            } else {
+                                s1 += dict_word[j];
+                                s2 += dict_word[j];
+                                j += 1;
+                            }
+                        }
+
+                        bool read = true;
+
+                        if (!le){
+                            if (s1.size() != b.size()){
+                                read = false;
+                            }
+                        }
+
+                        if (read){
+
+                            w1.name = s1;
+                            w1.word_index = index;
+
+                            if (w1.name == b){
+                                begin_in = true;
+                                begin_index = index;
+                                w1.discovered = true;
+                                begin_word = w1;
+                            } else if (w1.name == e){
+                                end_in = true;
+                            }
+
+                            word_dict[index] = w1;
+                            index += 1;
+                        }
+
+                        read = true;
+
+                        if (!le){
+                            if (s2.size() != b.size()){
+                                read = false;
+                            }
+                        }
+
+                        if (read){
+
+                            w2.name = s2;
+                            w2.word_index = index;
+
+                            if (w2.name == b){
+                                begin_in = true;
+                                begin_index = index;
+                                w1.discovered = true;
+                                begin_word = w2;
+                            } else if (w2.name == e){
+                                end_in = true;
+                            }
+
+                            word_dict[index] = w2;
+                            index += 1;
+                        }
+                        found_symbol = true;
+                        break;
+
+                    } else if (dict_word[i] == '?'){
+                        Word w1;
+                        Word w2;
+
+                        string s1 = "";
+                        string s2 = "";
+
+                        size_t j = 0;
+                        while (j < dict_word.size()){
+                            if (j == i - 1) {
+                                s1 += dict_word[j];
+                                s2 += dict_word[j];
+                                s2 += dict_word[j];
+                                j += 2;
+                            } else {
+                                s1 += dict_word[j];
+                                s2 += dict_word[j];
+                                j += 1;
+                            }
+                        }
+
+                        bool read = true;
+
+                        if (!le){
+                            if (s1.size() != b.size()){
+                                read = false;
+                            }
+                        }
+
+                        if (read){
+
+                            w1.name = s1;
+                            w1.word_index = index;
+
+                            if (w1.name == b){
+                                begin_in = true;
+                                begin_index = index;
+                                w1.discovered = true;
+                                begin_word = w1;
+                            } else if (w1.name == e){
+                                end_in = true;
+                            }
+
+                            word_dict[index] = w1;
+                            index += 1;
+                        }
+
+                        read = true;
+
+                        if (!le){
+                            if (s2.size() != b.size()){
+                                read = false;
+                            }
+                        }
+
+                        if (read){
+
+                        w2.name = s2;
+                        w2.word_index = index;
+
+                        if (w2.name == b){
+                            begin_in = true;
+                            begin_index = index;
+                            w2.discovered = true;
+                            begin_word = w2;
+                        } else if (w2.name == e){
+                            end_in = true;
+                        }
+
+                        word_dict[index] = w2;
+                        index += 1;
+                        }
+                        found_symbol = true;
+                        break;
+
+                    } 
+                }
+            }
+            if (!found_symbol){
+                bool read = true;
+                
+                if (!le){
+                    if (dict_word.size() != b.size()){
+                        read = false;
+                    }
+                }
+
+                if (read){
+                    Word w;
+                    w.name = dict_word;
+                    w.word_index = index;
+
+                    if (w.name == b){
+                        begin_in = true;
+                        begin_index = index;
+                        w.discovered = true;
+                        begin_word = w;
+                    
+                    } else if (w.name == e){
+                        end_in = true;
+                    }
+
+                    word_dict[index] = w;
+                    index += 1;
+                }
+        }
+        word_count = index + 1;
+            
+        }
+    }
+
+}
+
+
+bool add_to_bundle(bool cm, bool lm, bool pm, const Word &current, const Word &compare){
+
+    if ((current.name.size() == compare.name.size() + 1) || current.name.size() + 1 == compare.name.size()
+     || (current.name.size() == compare.name.size())){
+       
+    } else {
+        return false;
+    }
+
+    if (cm){
+        if (check_change(current, compare)){
+            return true;
+        }
+    }
+    if (lm){
+        if (check_length(current, compare)){
+            return true;
+        }
+    } 
+    if (pm){
+        if (check_swap(current, compare)){
+            return true;
+        }
+    }
+    return false;
+}
+
+// bool check_useful(const Word &current, const Word &compare){
+//     if (current.size() )
+// }
+
+void search(const string &end, const bool queue_type, 
+const bool change_mode, const bool length_mode, const bool swap_mode, const char get_display_type){
+    // size_t current_index = 0;
+    size_t current; // maybe change to pointer if possible
+    deque<size_t> bundle; 
+    if (get_display_type == 'W'){
+
+    } else {
+        display_type = false;
+    }
+
+
+    // adds first word to bundle
+    bundle.push_front(begin_index); // adds first word's index to bundle
+    words_searched += 1;
+
+    
+    
+    // make some booleans
+    bool continue_search = true;
+
+    while (continue_search){
+    // for (int i = 0; i < 5; i++){
+    // update current and queue
+        if (queue_type){ // 1
+            current = bundle.back(); // 
+            bundle.pop_back();
+        } else {
+            current = bundle.front();
+            bundle.pop_front();
+        }   
+
+        // loop through all words and add any that are good for change
+        for (size_t i = 0; i < word_count; ++i){
+
+            if (!word_dict[i].discovered){ // 1
+
+                // if change, add it to queue and mark it as discovered
+                if (add_to_bundle(change_mode, length_mode, swap_mode, word_dict[current], word_dict[i])){ // check add to bundle
+                    words_searched += 1; 
+                    word_dict[i].discovered = true;
+                    word_dict[i].prev_word_index = current;
+                    if (word_dict[i].name == end){
+                        continue_search = false;
+                        do_backtrack = true;
+                        found_word = word_dict[i];
+                        break;
+                    }
+                    bundle.push_front(word_dict[i].word_index);
+                }
+
+            }
+        }
+
+
+        // ends loop if nothing is found
+        if (bundle.empty()){
+            continue_search = false;
+        }
+
+    }
+
+    
+}
+
+
+void backtrack(){
+    if (do_backtrack){
+        bool cont = true;
+        output.push_front(found_word);
+        while(cont){
+            size_t ind;
+            ind = output[0].prev_word_index;
+            output.push_front(word_dict[ind]);
+            if (word_dict[ind].name == begin_word.name){
+                cont = false;
+            }
+        }
+        words_in_morph = output.size();
+
+        cout << "Words in morph: " << words_in_morph << endl;   
+
+        if (display_type){
+            show_regular();
+        } else {
+            show_mod();
+        }
+        // cout << "Words discovered: " << words_searched << endl;
+
+}   
+
+     else {
+        cout << "No solution, " << words_searched << " words discovered." << endl;
+    }
+}
+
+void show_regular(){
+        for (size_t i = 0; i < output.size(); ++i){
+            cout << output[i].name << endl;
+        }
+}
+
+void show_mod(){
+
+    cout << output[0].name << endl;
+    for (size_t i = 1; i < output.size(); ++i){
+            if (check_change(output[i-1], output[i])){
+                size_t position = 0;
+                char letter = '\0';
+
+                for (size_t j = 0; j < output[i].name.size(); ++j){
+                    if (output[i-1].name[j] != output[i].name[j]){
+                        position = j;
+                        letter = output[i].name[j];
+                        break;
+                    }
+                }
+
+                cout << "c," << position << "," << letter << endl;
+
+            } else if (check_length(output[i-1], output[i])){
+
+                if (output[i-1].name.size() < output[i].name.size()){
+                    size_t position = 0;
+                    char letter = '\0';
+
+                    for (size_t j = 0; j < output[i].name.size() + 1; ++j){
+                        if (output[i-1].name[j] != output[i].name[j]){
+                            letter = output[i].name[j];
+                            position = j;
+                            break;
+                        } 
+                    }
+
+                    cout << "i," << position << "," << letter << endl;
+                } else {
+                    size_t position = 0;
+                    for (size_t j = 0; j < output[i-1].name.size() + 1; ++j){
+                        if (output[i-1].name[j] != output[i].name[j]){
+                            position = j;
+                            break;
+                        }
+                    }
+                    cout << "d," << position << endl;
+                }
+
+
+            } else {
+                size_t position = 0;
+                for (size_t j = 0; j < output[i].name.size(); ++j){
+                        if (output[i-1].name[j] != output[i].name[j]){
+                            position = j;
+                            break;
+                        }
+                    }
+                cout << "s," << position << endl;
+            }
+        }
+}
+
+
+
+
+private:
+vector<Word> word_dict;
+deque<Word> output;
+Word found_word;
+Word begin_word;
+size_t begin_index;
+size_t word_count;
+size_t words_in_morph;
+// Word end_word;
+int words_searched;
+bool display_type;
+bool do_backtrack;
+bool begin_in;
+bool end_in;
+
+// might be bad for time complexity since each word has to be looped thru to find the "//"
+bool is_comment(const string &w){
+    if (w.size() == 1){
+        return false;
+    }
+
+    for (size_t i = 0; i < w.size() - 1; ++i){
+        if (w[i] == '/' && w[i + 1] == '/') {
+            return true;
+        }
+    }
+    return false;
+}
+
+// struct Mods {
+//     bool is_modded;
+//     int position;
+//     char letter;
+// };
+
+bool check_change(const Word &w1, const Word &w2){
+    int count = 0;
+
+    if (w1.name.size() != w2.name.size()){
+        return false;
+    } 
+
+    for (size_t i = 0; i < w1.name.size(); ++i){
+        if (w1.name[i] != w2.name[i]){
+            count += 1;
+        }
+    }
+    if (count == 1){
+        return true;
+    } else {
+        return false;
+    }
+
+}   
+
+bool check_length(const Word &w1, const Word &w2){ // make it so you dont copy strings - i think it is just change that needs fixing, will change this tmrw if needed
+
+    if (w1.name.size() == w2.name.size()){
+        return false;
+    }
+
+    string smaller;
+    string bigger;
+    int count = 0;
+    if (w1.name.size() < w2.name.size()){
+        smaller = w1.name;
+        bigger = w2.name;
+    } else{
+        smaller = w2.name;
+        bigger = w1.name;
+    }
+
+    if ((bigger.size() - smaller.size()) >= 2){
+        return false;
+    }
+
+
+    size_t i = 0;
+    size_t j = 0;
+    while (i < smaller.size()){
+        if (smaller[i] != bigger[j]){
+            count += 1;
+            if (count >= 2){
+                return false;
+            }
+            j += 1;
+        } else {
+            i += 1;
+            j += 1;
+        }
+
+    }
+    return true;  
+
+}
+
+
+bool check_swap(const Word &w1, const Word &w2){
+    if (w2.name.size() != w1.name.size()){
+        return false;
+    } 
+
+    int count = 0;
+
+    size_t i = 0;
+
+
+    for (size_t j = 0; j < w1.name.size(); ++j){
+        if (w1.name[j] != w2.name[j]){
+            count += 1;
+            i = j;
+        }
+    }
+
+    if (count == 2){
+        if ((w1.name[i] == w2.name[i-1]) && (w1.name[i-1] == w2.name[i])){
+        return true;
+        } else {
+        return false;
+        }
+    } else {
+        return false;
+    }
+
+
+}
+
+
+};
+
+
+
+
+
+
+
+int main(int argc, char* argv[]){
+    ios_base::sync_with_stdio(false);
+    xcode_redirect(argc,argv);
+
+
+
+
+
+
+    // get_single_mode(argc, argv);
+    CommandInput ci;
+    ci.get_commands(argc, argv);
+    ci.check_commands();
+
+    // declare a morph
+    Morph m1;
+    m1.read_dict(ci.get_begin(), ci.get_end(), ci.get_length());
+    // m1.check_begin_end(ci.get_begin(), ci.get_end());
+
+
+    // if (ci.get_help()){
+    //     cout << "Ill do this later" << endl;
+    //     return 0;
+    // } else {
+
+            m1.search(ci.get_end(), ci.get_queue(), 
+            ci.get_change(), ci.get_length(), ci.get_swap(), ci.get_output());
+            m1.backtrack();
+
+
+//}
+
+
+
+
+
+
+
+
+return 0;
+}
+
+// bool operator==(const Word &w1, const Word &w2){
+//     return w1.name == w2.name;
+// }
+
+//TODO: make the words discovered output correct
+//TODO: make style better - save code first tho
+//TODO: Store modification in struct - maybe not
+//TODO: read thru optimization tips and implement them
+//TODO: look at time complexity for each line in search
+//TODO: Use assumptions to advantage
+// check if length mode is on and swap and others are off
+
